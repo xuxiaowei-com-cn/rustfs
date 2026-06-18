@@ -9,16 +9,19 @@ Status values: `[ ]` not started, `[~]` in progress, `[x]` complete, `[!]` block
 - Baseline: `main` at `a30cafa73fde3e7e88c160e70c290e74a0c2235f`
   after `rustfs/rustfs#3563` merged.
 - PR type for this branch: `consumer-migration`
-- Runtime behavior changes: no external behavior change expected.
+- Runtime behavior changes: no migration behavior change expected; CI follow-up
+  preserves empty-object erasure recovery by avoiding zero-byte SIMD decode.
 - Rust code changes: migrate scanner cache persistence, RustFS object
   namespace-lock helper, and table catalog storage bounds away from ECStore
   compatibility operation traits to `rustfs-storage-api` operation traits with
   ECStore concrete associated-type bindings. ECStore-owned `ObjectInfo`,
   `ObjectOptions`, readers, delete DTOs, walk filters, lock wrappers, and
-  implementation behavior stay in ECStore.
+  implementation behavior stay in ECStore. CI follow-up handles zero-length
+  shards in erasure reconstruction without changing non-empty shard behavior.
 - CI/script changes: extend migration guards so outer consumers do not drift
   back to ECStore operation trait imports.
-- Docs changes: record the larger operation consumer-bound cleanup slice.
+- Docs changes: record the larger operation consumer-bound cleanup slice and
+  the empty-object erasure recovery CI follow-up.
 
 ## Phase 0 Tasks
 
@@ -1051,9 +1054,9 @@ Status values: `[ ]` not started, `[~]` in progress, `[x]` complete, `[!]` block
 
 | Expert | Status | Notes |
 |---|---|---|
-| Quality/architecture | passed | Outer scanner/RustFS operation consumers now use storage-api operation traits with explicit ECStore concrete associated-type bindings; ECStore keeps compatibility traits only for implementation and downstream compatibility. |
-| Migration preservation | passed | Scanner cache persistence, object self-copy namespace locking, and table catalog object storage keep the same ECStore DTOs, readers, lock wrappers, walk filter shape, and storage error conversion behavior. |
-| Testing/verification | passed | Focused RustFS/scanner compile/tests, migration/layer guards, formatting, diff hygiene, Rust risk scan, and full `make pre-commit` passed. |
+| Quality/architecture | passed | Outer scanner/RustFS operation consumers now use storage-api operation traits with explicit ECStore concrete associated-type bindings; the erasure CI fix is isolated to zero-length shard reconstruction. |
+| Migration preservation | passed | Scanner cache persistence, object self-copy namespace locking, and table catalog object storage keep the same ECStore DTOs/readers/error conversion; non-empty erasure encode/decode paths still use the existing encoders. |
+| Testing/verification | passed | Focused RustFS/scanner/erasure compile/tests, migration/layer guards, formatting, diff hygiene, Rust risk scan, and full `make pre-commit` passed. |
 
 ## Verification Notes
 
@@ -1065,6 +1068,15 @@ Passed before push:
 - `cargo test -p rustfs --lib table_catalog`: passed; 168 passed.
 - `cargo test -p rustfs --lib app::object_usecase`: passed; 86 passed, 2
   ignored.
+- `cargo test -p rustfs-ecstore erasure_coding::erasure::tests`: passed; 31
+  passed.
+- `PROPTEST_CASES=1024 cargo test -p rustfs-ecstore
+  erasure_coding::erasure::tests::decode_data_and_parity_round_trips_bounded_recoverability`:
+  passed.
+- `cargo test -p rustfs-ecstore
+  rpc::peer_s3_client::tests::local_get_bucket_info_survives_prior_walk_timeout`:
+  passed after a full-crate `cargo test -p rustfs-ecstore` run exposed this
+  unrelated ordinary-harness global-state interference.
 - `./scripts/check_architecture_migration_rules.sh`: passed.
 - `./scripts/check_layer_dependencies.sh`: passed.
 - `cargo fmt --all --check`: passed.
@@ -1072,7 +1084,7 @@ Passed before push:
 - Rust risk scan: no new `unwrap`/`expect`, panic/todo markers, `unsafe`,
   process-spawning calls, lossy casts, println/eprintln, or relaxed ordering in
   added Rust lines.
-- `make pre-commit`: passed; nextest reported 6207 tests passed and 111
+- `make pre-commit`: passed; nextest reported 6215 tests passed and 111
   skipped, and doctests passed.
 
 Notes:
@@ -1087,6 +1099,9 @@ Notes:
 - The slice does not alter scanner cache load/save behavior, object self-copy
   lock behavior, table catalog object operations, list/walk implementation,
   object reader/writer behavior, or storage error runtime behavior.
+- The CI follow-up preserves empty-object erasure reconstruction by filling
+  missing zero-length shards before calling encoders that reject zero-byte SIMD
+  shard sizes.
 
 ## Handoff Notes
 
